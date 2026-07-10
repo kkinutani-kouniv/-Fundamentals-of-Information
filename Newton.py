@@ -34,6 +34,8 @@ BLACKHOLE_CENTER_Y = SCREEN_H // 2
 BLACKHOLE_PULL = 0.72
 BLACKHOLE_SCORE = 5
 BLACKHOLE_CHAIN_GOLD_CHANCE = 45
+BLACKHOLE_CHAIN_LIMIT = 2
+SPARKLE_CREATE_CHANCE = 50
 
 FPS = 30
 DIFFICULTY_START_FRAME = FPS * 75
@@ -270,6 +272,11 @@ class Apple:
         self.is_special = True
         self.apple_hit_cooldown = max(self.apple_hit_cooldown, 16)
 
+    def make_gold(self):
+        self.is_gold = True
+        self.is_special = False
+        self.apple_hit_cooldown = max(self.apple_hit_cooldown, 16)
+
     def draw_trail(self, ox, oy):
         for i, (tx, ty) in enumerate(self.trail):
             if i % 2 == 0:
@@ -396,6 +403,7 @@ class App:
         self.blackhole_charge = 0
         self.blackhole_timer = 0
         self.blackhole_flash_timer = 0
+        self.blackhole_chain_count = 0
         self.gameover = False
 
         self.play_frame = 0
@@ -444,6 +452,7 @@ class App:
         self.blackhole_charge = 0
         self.blackhole_timer = 0
         self.blackhole_flash_timer = 0
+        self.blackhole_chain_count = 0
         self.gameover = False
 
         self.play_frame = 0
@@ -711,13 +720,24 @@ class App:
             self.special_timer = SPECIAL_FREEZE_TIME
             self.shake_timer = max(self.shake_timer, 6)
 
-    def start_blackhole(self):
+    def start_blackhole(self, chain=False):
+        if chain:
+            self.blackhole_chain_count += 1
+        else:
+            self.blackhole_chain_count = 1
+
         self.blackhole_charge = 0
         self.blackhole_timer = BLACKHOLE_TIME
         self.blackhole_flash_timer = 30
         self.shake_timer = max(self.shake_timer, 28)
         self.edge_alert_timer = max(self.edge_alert_timer, 20)
-        self.add_text_popup(BLACKHOLE_CENTER_X, BLACKHOLE_CENTER_Y - 28, "BLACK HOLE!", 7)
+
+        if chain:
+            label = "BLACK HOLE " + str(self.blackhole_chain_count) + "/" + str(BLACKHOLE_CHAIN_LIMIT)
+        else:
+            label = "BLACK HOLE!"
+
+        self.add_text_popup(BLACKHOLE_CENTER_X, BLACKHOLE_CENTER_Y - 28, label, 7)
 
     def update_blackhole(self):
         self.blackhole_timer -= 1
@@ -777,11 +797,12 @@ class App:
                 self.add_spark(apple_cx, apple_cy)
 
                 # Chain chance: absorbed sparkle apples always charge the next black hole.
-                # Gold apples sometimes charge it too, so one black hole can lead into another.
-                if was_special:
-                    self.add_blackhole_charge(apple_cx, apple_cy - 18, "NEXT +1")
-                elif was_gold and pyxel.rndi(1, 100) <= BLACKHOLE_CHAIN_GOLD_CHANCE:
-                    self.add_blackhole_charge(apple_cx, apple_cy - 18, "NEXT +1")
+                # Gold apples sometimes charge it too. Chains stop at BLACKHOLE_CHAIN_LIMIT.
+                if self.blackhole_chain_count < BLACKHOLE_CHAIN_LIMIT:
+                    if was_special:
+                        self.add_blackhole_charge(apple_cx, apple_cy - 18, "NEXT +1")
+                    elif was_gold and pyxel.rndi(1, 100) <= BLACKHOLE_CHAIN_GOLD_CHANCE:
+                        self.add_blackhole_charge(apple_cx, apple_cy - 18, "NEXT +1")
 
                 apple.reset(self.difficulty, self.get_gold_rate())
                 apple.y = pyxel.rndi(-210, -50)
@@ -789,10 +810,17 @@ class App:
         if self.blackhole_timer <= 0:
             self.blackhole_timer = 0
 
-            if self.blackhole_charge >= BLACKHOLE_MAX:
+            if self.blackhole_charge >= BLACKHOLE_MAX and self.blackhole_chain_count < BLACKHOLE_CHAIN_LIMIT:
                 self.add_text_popup(BLACKHOLE_CENTER_X, BLACKHOLE_CENTER_Y - 40, "VOID CHAIN!", COLOR_SPECIAL)
-                self.start_blackhole()
+                self.start_blackhole(chain=True)
             else:
+                if self.blackhole_charge >= BLACKHOLE_MAX:
+                    self.blackhole_charge = 0
+                    self.add_text_popup(BLACKHOLE_CENTER_X, BLACKHOLE_CENTER_Y - 40, "CHAIN LIMIT!", 8)
+                elif self.blackhole_chain_count >= BLACKHOLE_CHAIN_LIMIT:
+                    self.add_text_popup(BLACKHOLE_CENTER_X, BLACKHOLE_CENTER_Y - 40, "CHAIN END!", 8)
+
+                self.blackhole_chain_count = 0
                 self.blackhole_flash_timer = 12
                 self.shake_timer = max(self.shake_timer, 8)
 
@@ -844,13 +872,6 @@ class App:
     def add_text_popup(self, x, y, text, color):
         popup_x = x - len(text) * 2
         self.popups.append(ScorePopup(popup_x, y, text, color))
-
-    def reduce_gravity_gauge(self, x, y):
-        if self.miss_count > 0:
-            self.miss_count -= 1
-            self.add_text_popup(x, y, "SAFE!", COLOR_SPECIAL)
-        else:
-            self.add_text_popup(x, y, "SPECIAL!", COLOR_SPECIAL)
 
     def add_spark(self, x, y):
         self.sparks.append(HitSpark(x, y))
@@ -959,23 +980,36 @@ class App:
                         self.add_spark(hit_x, hit_y)
 
                     made_special = False
+                    made_gold = False
 
-                    # Any apple that collides with a gold apple can become a sparkle apple.
-                    # This no longer requires the player to have touched or flicked either apple.
+                    # Any apple that collides with a gold apple can change,
+                    # but only half of those chances become sparkle apples.
+                    # The other half stays as / turns into a gold apple,
+                    # so black holes are easier to chain than before but not too frequent.
                     a_was_gold = a.is_gold
                     b_was_gold = b.is_gold
 
                     if b_was_gold and not a.is_special:
-                        a.make_special()
-                        made_special = True
+                        if pyxel.rndi(1, 100) <= SPARKLE_CREATE_CHANCE:
+                            a.make_special()
+                            made_special = True
+                        else:
+                            a.make_gold()
+                            made_gold = True
 
                     if a_was_gold and not b.is_special:
-                        b.make_special()
-                        made_special = True
+                        if pyxel.rndi(1, 100) <= SPARKLE_CREATE_CHANCE:
+                            b.make_special()
+                            made_special = True
+                        else:
+                            b.make_gold()
+                            made_gold = True
 
                     if made_special:
                         self.add_text_popup(hit_x, hit_y - 15, "SPARKLE!", COLOR_SPECIAL)
-                        self.reduce_gravity_gauge(hit_x, hit_y - 25)
+                        self.add_spark(hit_x, hit_y)
+                    elif made_gold:
+                        self.add_text_popup(hit_x, hit_y - 15, "GOLD!", 10)
                         self.add_spark(hit_x, hit_y)
 
     def get_newton_talk(self):
