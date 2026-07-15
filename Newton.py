@@ -380,6 +380,14 @@ class App:
         self.tutorial_apple = None
         self.tutorial_bounced = False
 
+        self.sparkle_help_shown = False
+        self.sparkle_help_timer = 0
+        self.blackhole_help_shown = False
+        self.blackhole_help_timer = 0
+        self.time_stop_help_shown = False
+        self.time_stop_help_timer = 0
+        self.time_stop_ready_was_full = False
+
         self.apples = [Apple(0) for _ in range(START_APPLE_COUNT)]
         self.notes = []
         self.popups = []
@@ -412,6 +420,14 @@ class App:
         self.face = FACE_NORMAL
         self.stage = 0
         self.prev_stage = 0
+
+        self.sparkle_help_shown = False
+        self.sparkle_help_timer = 0
+        self.blackhole_help_shown = False
+        self.blackhole_help_timer = 0
+        self.time_stop_help_shown = False
+        self.time_stop_help_timer = 0
+        self.time_stop_ready_was_full = False
 
         self.create_clouds()
         self.create_tree_tiles()
@@ -461,6 +477,14 @@ class App:
         self.face = FACE_NORMAL
         self.stage = 0
         self.prev_stage = 0
+
+        self.sparkle_help_shown = False
+        self.sparkle_help_timer = 0
+        self.blackhole_help_shown = False
+        self.blackhole_help_timer = 0
+        self.time_stop_help_shown = False
+        self.time_stop_help_timer = 0
+        self.time_stop_ready_was_full = False
 
     def setup_tutorial_apple(self, phase):
         self.tutorial_apple = Apple(0)
@@ -574,7 +598,7 @@ class App:
         if self.tutorial_apple is not None:
             self.update_tutorial_apple_drop()
 
-        if self.tutorial_phase_frame > FPS * 2:
+        if self.tutorial_phase_frame > FPS * 4:
             self.start_game()
 
     def get_difficulty(self):
@@ -715,10 +739,27 @@ class App:
             self.apples.append(Apple(self.difficulty, self.get_gold_rate()))
 
     def try_activate_special(self):
-        if self.special_charge >= SPECIAL_MAX and pyxel.btnp(pyxel.KEY_SPACE):
+        ready = self.special_charge >= SPECIAL_MAX and self.special_timer <= 0
+
+        if ready and not self.time_stop_ready_was_full:
+            self.time_stop_ready_was_full = True
+
+            # Show the SPACE hint only the first time time stop becomes ready.
+            # Keeping it short and text-only prevents it from hiding apples late in the game.
+            if not self.time_stop_help_shown:
+                self.time_stop_help_shown = True
+                self.time_stop_help_timer = FPS * 2
+
+        if not ready:
+            self.time_stop_ready_was_full = False
+
+        if ready and pyxel.btnp(pyxel.KEY_SPACE):
             self.special_charge = 0
             self.special_timer = SPECIAL_FREEZE_TIME
+            self.time_stop_help_timer = 0
+            self.time_stop_ready_was_full = False
             self.shake_timer = max(self.shake_timer, 6)
+            self.add_text_popup(100, 52, "TIME STOP!", 7)
 
     def start_blackhole(self, chain=False):
         if chain:
@@ -830,6 +871,10 @@ class App:
 
         if self.blackhole_charge > old_charge:
             self.add_text_popup(x, y, text, COLOR_SPECIAL)
+
+            if not self.blackhole_help_shown:
+                self.blackhole_help_shown = True
+                self.blackhole_help_timer = FPS * 4
 
             if self.blackhole_charge >= BLACKHOLE_MAX:
                 self.add_text_popup(x, y - 9, "VOID READY!", 7)
@@ -1008,6 +1053,9 @@ class App:
                     if made_special:
                         self.add_text_popup(hit_x, hit_y - 15, "SPARKLE!", COLOR_SPECIAL)
                         self.add_spark(hit_x, hit_y)
+                        if not self.sparkle_help_shown:
+                            self.sparkle_help_shown = True
+                            self.sparkle_help_timer = FPS * 4
                     elif made_gold:
                         self.add_text_popup(hit_x, hit_y - 15, "GOLD!", 10)
                         self.add_spark(hit_x, hit_y)
@@ -1162,6 +1210,17 @@ class App:
         self.update_clouds()
         self.update_popups()
         self.update_sparks()
+        self.update_help_timers()
+
+    def update_help_timers(self):
+        if self.sparkle_help_timer > 0:
+            self.sparkle_help_timer -= 1
+
+        if self.blackhole_help_timer > 0:
+            self.blackhole_help_timer -= 1
+
+        if self.time_stop_help_timer > 0:
+            self.time_stop_help_timer -= 1
 
     def get_shake_offset(self):
         if self.blackhole_timer > 0:
@@ -1513,9 +1572,11 @@ class App:
                 inner_w = max(1, skill_fill - 2)
                 pyxel.rect(skill_x + 1, skill_y + 1, inner_w, skill_h - 2, 10)
 
+        # Keep the small SPACE blink inside the time-stop bar when it is ready.
+        # The large center SPACE hint is still shown only once for a short time.
         if self.special_charge >= SPECIAL_MAX and self.special_timer <= 0:
             if (pyxel.frame_count // 10) % 2 == 0:
-                pyxel.text(skill_x + 9, skill_y + 2, "SPACE", 0)
+                pyxel.text(skill_x + 10, skill_y + 2, "SPACE", 0)
 
         hole_x = 146
         hole_y = 4
@@ -1541,6 +1602,7 @@ class App:
             if hole_fill > 0:
                 inner_w = max(1, hole_fill - 2)
                 pyxel.rect(hole_x + 1, hole_y + 1, inner_w, hole_h - 2, 13)
+
 
     def draw_stage_alert(self):
         if self.edge_alert_timer > 0:
@@ -1577,6 +1639,30 @@ class App:
             0
         )
 
+    def draw_tutorial_hold_example(self, x, y):
+        # Show only the actual hold effect that appears during play.
+        # This avoids extra MOVE/CATCH/REPEL labels and focuses on the difficult input.
+        pyxel.rect(x, y, 82, 50, 1)
+        pyxel.rectb(x, y, 82, 50, 11)
+        pyxel.text(x + 6, y + 5, "HOLD LOOK", 7)
+
+        hand_x = x + 12
+        hand_y = y + 20
+        cx = hand_x + 8
+        cy = hand_y + 8
+
+        if (pyxel.frame_count // 4) % 2 == 0:
+            pyxel.circb(cx, cy, 12, 10)
+            pyxel.circb(cx, cy, 9, 7)
+        else:
+            pyxel.circb(cx, cy, 11, 7)
+            pyxel.circb(cx, cy, 8, 10)
+
+        pyxel.blt(hand_x, hand_y, 0, 32, 112, 16, 16, 0)
+        pyxel.text(x + 35, y + 20, "YELLOW", 10)
+        pyxel.text(x + 35, y + 31, "RING", 10)
+        pyxel.text(x + 35, y + 41, "= REPEL", 11)
+
     def draw_tutorial_screen(self):
         ox, oy = self.get_shake_offset()
 
@@ -1585,44 +1671,80 @@ class App:
         self.draw_ground_base(ox, oy)
         self.draw_leaves(ox, oy)
         self.draw_leaf_apples(ox, oy)
+        self.draw_ground_items_foreground(ox, oy)
 
         # No gauges during the tutorial, but keep the top band black instead of empty sky.
+        # Put only a small title here so the falling apple lane stays open.
         pyxel.rect(0, 0, SCREEN_W, UI_H, 0)
         pyxel.line(0, UI_H - 1, SCREEN_W, UI_H - 1, 7)
+        pyxel.text(76, 5, "TUTORIAL", 10)
 
+        # Keep tutorial instructions away from the center falling lane.
+        # The apple falls around x=92, so the left help panel ends before that area.
+        if self.tutorial_phase == "catch":
+            pyxel.rect(2, 24, 78, 60, 1)
+            pyxel.rectb(2, 24, 78, 60, 10)
+            draw_big_text(7, 30, "CLICK!", 2, 7, 0)
+            pyxel.text(8, 55, "CLICK = CATCH", 10)
+            pyxel.text(8, 67, "ONE TAP", 7)
+            pyxel.text(8, 77, "GET SCORE", 7)
+            if (pyxel.frame_count // 12) % 2 == 0:
+                pyxel.text(104, 174, "CLICK APPLE", 10)
+
+        elif self.tutorial_phase == "hold":
+            pyxel.rect(2, 24, 82, 66, 1)
+            pyxel.rectb(2, 24, 82, 66, 11)
+            draw_big_text(8, 30, "HOLD!", 2, 11, 0)
+            pyxel.text(8, 55, "HOLD = REPEL", 11)
+            pyxel.text(8, 67, "KEEP PRESS", 7)
+            pyxel.text(8, 78, "BOUNCE APPLE", 7)
+            self.draw_tutorial_hold_example(2, 96)
+
+            if (pyxel.frame_count // 12) % 2 == 0:
+                pyxel.text(92, 174, "HOLD ON APPLE", 11)
+
+        else:
+            # READY is shown after the operation practice, so a compact bottom panel is acceptable.
+            draw_big_text(58, 30, "READY!", 2, 7, 0)
+            pyxel.rect(8, 122, 184, 42, 1)
+            pyxel.rectb(8, 122, 184, 42, 10)
+            if self.tutorial_phase_frame < FPS * 2:
+                pyxel.text(18, 131, "GOLD HIT MAY MAKE SPARKLE", 10)
+                pyxel.text(23, 143, "SPARKLES CHARGE BLACK HOLE", 7)
+                pyxel.text(35, 155, "BH ABSORBS APPLES", 13)
+            else:
+                pyxel.text(26, 131, "GOLD APPLES CHARGE TIME", 10)
+                pyxel.text(31, 143, "WHEN FULL: PRESS SPACE", 7)
+                pyxel.text(56, 155, "TIME STOP", 13)
+            if self.tutorial_phase_frame > 34:
+                self.draw_ui()
+
+        # Draw the tutorial apple after the help text so it is never hidden behind instructions.
         if self.tutorial_apple is not None:
             self.tutorial_apple.draw_trail(ox, oy)
             self.tutorial_apple.draw(ox, oy)
-
-        self.draw_ground_items_foreground(ox, oy)
-
-        pyxel.rect(18, 22, 164, 28, 1)
-        pyxel.rectb(18, 22, 164, 28, 7)
-        draw_big_text(45, 29, "TUTORIAL", 2, 10, 0)
-
-        if self.tutorial_phase == "catch":
-            draw_big_text(47, 62, "CLICK!", 3, 7, 0)
-            if (pyxel.frame_count // 12) % 2 == 0:
-                pyxel.rect(34, 158, 132, 18, 1)
-                pyxel.rectb(34, 158, 132, 18, 10)
-                pyxel.text(52, 165, "CLICK THE APPLE", 10)
-        elif self.tutorial_phase == "hold":
-            draw_big_text(55, 62, "HOLD!", 3, 11, 0)
-            if (pyxel.frame_count // 12) % 2 == 0:
-                pyxel.rect(22, 158, 156, 18, 1)
-                pyxel.rectb(22, 158, 156, 18, 11)
-                pyxel.text(42, 165, "HOLD CLICK TO REPEL", 11)
-        else:
-            draw_big_text(53, 62, "READY!", 3, 7, 0)
-            if self.tutorial_phase_frame > 24:
-                pyxel.text(65, 166, "GAUGES ONLINE", 10)
-            if self.tutorial_phase_frame > 34:
-                self.draw_ui()
 
         self.draw_sparks(ox, oy)
         self.draw_popups(ox, oy)
         self.draw_force_field()
         self.draw_cursor()
+
+    def draw_help_messages(self):
+        if self.sparkle_help_timer > 0:
+            pyxel.rect(8, 20, 184, 26, 1)
+            pyxel.rectb(8, 20, 184, 26, 10)
+            pyxel.text(18, 27, "GOLD HIT MAKES SPARKLE APPLE!", 10)
+            pyxel.text(28, 37, "CATCH SPARKLES TO CHARGE BH", 7)
+
+        if self.blackhole_help_timer > 0:
+            pyxel.rect(10, 50, 180, 24, 1)
+            pyxel.rectb(10, 50, 180, 24, 13)
+            pyxel.text(22, 57, "SPARKLE APPLES CHARGE BH", 13)
+            pyxel.text(36, 66, "FULL BH STARTS BLACK HOLE", 7)
+
+        if self.time_stop_help_timer > 0 and self.special_timer <= 0:
+            if (pyxel.frame_count // 5) % 2 == 0:
+                draw_big_text(66, 84, "SPACE", 2, 7, 0)
 
     def draw_title_screen(self):
         ox = 0
@@ -1648,7 +1770,7 @@ class App:
         draw_big_text(34, 62, "FIND GRAVITY!", 2, 10, 8)
 
         pyxel.text(25, 126, "CLICK APPLE : GET", 7)
-        pyxel.text(25, 138, "CLICK / SPACE START", 10)
+        pyxel.text(23, 138, "START OPENS TUTORIAL", 10)
 
         if (pyxel.frame_count // 15) % 2 == 0:
             pyxel.text(66, 174, "PRESS START", 7)
@@ -1691,6 +1813,7 @@ class App:
 
         self.draw_sparks(ox, oy)
         self.draw_popups(ox, oy)
+        self.draw_help_messages()
 
         self.draw_ui()
         self.draw_stage_alert()
